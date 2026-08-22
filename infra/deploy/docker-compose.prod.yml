@@ -1,5 +1,5 @@
 ###############################################################################
-# Production Docker Compose — Single EC2 (13.207.8.37)
+# Production Docker Compose — Single EC2 (15.207.160.237)
 # Domain: epbx.negd.in
 # Everything runs here: DB, Redis, API, Signaling, coturn, 3 frontends, Caddy
 ###############################################################################
@@ -124,7 +124,7 @@ services:
     network_mode: host
     volumes:
       - ./coturn/turnserver.prod.conf:/etc/coturn/turnserver.conf:ro
-    command: -c /etc/coturn/turnserver.conf --static-auth-secret=${COTURN_SECRET} --external-ip=13.207.8.37
+    command: -c /etc/coturn/turnserver.conf --static-auth-secret=${COTURN_SECRET} --external-ip=15.207.160.237
 
   # ─── Caddy (reverse proxy + auto Let's Encrypt HTTPS) ──────────────────────
   caddy:

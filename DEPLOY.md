@@ -8,7 +8,7 @@
 | S3 KYC Bucket | ✅ | `hotel-app-prod-kyc-docs` (private) |
 | S3 Assets Bucket | ✅ | `hotel-app-prod-app-assets` (private) |
 | EC2 Instance | ✅ | `i-058f75b2e9e630b67` (t3.medium, Ubuntu 22.04) |
-| Elastic IP | ✅ | **13.207.8.37** |
+| Elastic IP | ✅ | **15.207.160.237** |
 | Security Group | ✅ | `sg-00cd0649d4b0e7712` (SSH/HTTP/HTTPS/TURN) |
 | Key Pair | ✅ | `hotel-app-prod` |
 | Domain | ✅ | `epbx.negd.in` |
@@ -22,19 +22,19 @@ In your DNS management for `negd.in`, add:
 
 | Type | Name | Value | TTL |
 |---|---|---|---|
-| A | `api.epbx` | `13.207.8.37` | 300 |
-| A | `signal.epbx` | `13.207.8.37` | 300 |
-| A | `turn.epbx` | `13.207.8.37` | 300 |
-| A | `guest.epbx` | `13.207.8.37` | 300 |
-| A | `staff.epbx` | `13.207.8.37` | 300 |
-| A | `admin.epbx` | `13.207.8.37` | 300 |
+| A | `api.epbx` | `15.207.160.237` | 300 |
+| A | `signal.epbx` | `15.207.160.237` | 300 |
+| A | `turn.epbx` | `15.207.160.237` | 300 |
+| A | `guest.epbx` | `15.207.160.237` | 300 |
+| A | `staff.epbx` | `15.207.160.237` | 300 |
+| A | `admin.epbx` | `15.207.160.237` | 300 |0 |
 
 ---
 
 ## Step 3: SSH into EC2 and Install Docker
 
 ```bash
-ssh -i ~/.ssh/hotel-app-prod.pem ubuntu@13.207.8.37
+ssh -i ~/.ssh/hotel-app-prod.pem ubuntu@15.207.160.237
 ```
 
 Run on the server:
@@ -54,7 +54,7 @@ sudo usermod -aG docker ubuntu
 **Log out and back in** for docker group:
 ```bash
 exit
-ssh -i ~/.ssh/hotel-app-prod.pem ubuntu@13.207.8.37
+ssh -i ~/.ssh/hotel-app-prod.pem ubuntu@15.207.160.237
 docker --version   # verify
 ```
 
