@@ -1,46 +1,45 @@
 ###############################################################################
-# Production Docker Compose — Single EC2 deployment
-# Runs: PostgreSQL, Redis, API server, Signaling server, coturn, Caddy (HTTPS)
+# Production Docker Compose — Single EC2 (15.207.160.237)
 # Domain: epbx.negd.in
-# Cost: ~₹3,500–4,500/month on t3.medium
 ###############################################################################
 name: hotel-app-prod
 
 services:
-  # ─── PostgreSQL 15 ──────────────────────────────────────────────────────────
+  # ─── PostgreSQL ─────────────────────────────────────────────────────────────
   postgres:
     image: postgres:15-alpine
     restart: always
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB:-hotelapp}
+      POSTGRES_USER: ${POSTGRES_USER:-hotelapp}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ../../infra/docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hotelapp}"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
     networks:
       - backend
 
-  # ─── Redis 7 ────────────────────────────────────────────────────────────────
+  # ─── Redis ──────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     restart: always
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
-      retries: 5
+      retries: 10
     networks:
       - backend
 
-  # ─── API Server (NestJS) ────────────────────────────────────────────────────
+  # ─── API Server ─────────────────────────────────────────────────────────────
   api-server:
     build:
       context: ../..
@@ -53,13 +52,14 @@ services:
         condition: service_healthy
     env_file: .env.prod
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hotelapp}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hotelapp}
       REDIS_URL: redis://redis:6379
       PORT: "3001"
+      NODE_ENV: production
     networks:
       - backend
 
-  # ─── Signaling Server (Socket.io) ──────────────────────────────────────────
+  # ─── Signaling Server ───────────────────────────────────────────────────────
   signaling-server:
     build:
       context: ../..
@@ -73,10 +73,11 @@ services:
       REDIS_URL: redis://redis:6379
       API_SERVER_URL: http://api-server:3001
       PORT: "3002"
+      NODE_ENV: production
     networks:
       - backend
 
-  # ─── coturn (STUN/TURN) — host network for UDP relay ───────────────────────
+  # ─── coturn (host network for UDP relay) ────────────────────────────────────
   coturn:
     image: coturn/coturn:latest
     restart: always
@@ -85,7 +86,7 @@ services:
       - ./coturn/turnserver.prod.conf:/etc/coturn/turnserver.conf:ro
     command: -c /etc/coturn/turnserver.conf
 
-  # ─── Caddy (reverse proxy + auto HTTPS via Let's Encrypt) ──────────────────
+  # ─── Caddy (reverse proxy + auto Let's Encrypt HTTPS) ──────────────────────
   caddy:
     image: caddy:2-alpine
     restart: always
