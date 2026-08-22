@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { IdentityService } from '../identity.service';
 import { AuditService } from '../../audit/audit.service';
+import { AccessService } from '../../access/access.service';
 import { PRISMA_TOKEN } from '../../database/database.module';
 
 vi.mock('@hotel-app/core', async (importOriginal) => {
@@ -59,22 +60,26 @@ describe('IdentityService', () => {
   let service: IdentityService;
   let db: ReturnType<typeof makeDb>;
   let audit: ReturnType<typeof makeAudit>;
+  let access: { issueGrant: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     db = makeDb();
     audit = makeAudit();
+    access = { issueGrant: vi.fn().mockResolvedValue({ id: 'grant-001' }) };
 
     const module = await Test.createTestingModule({
       providers: [
         IdentityService,
         { provide: PRISMA_TOKEN, useValue: db },
         { provide: AuditService, useValue: audit },
+        { provide: AccessService, useValue: access },
       ],
     }).compile();
 
     service = module.get(IdentityService);
-    // Ensure auditService is injected (NestJS DI may skip it for non-decorated deps)
+    // Ensure mocks are injected
     (service as unknown as { auditService: typeof audit }).auditService = audit;
+    (service as unknown as { accessService: typeof access }).accessService = access;
   });
 
   describe('createIdentity() — Path A', () => {
@@ -119,7 +124,7 @@ describe('IdentityService', () => {
   });
 
   describe('approve()', () => {
-    it('transitions PENDING → ACTIVE with check-in/out dates', async () => {
+    it('transitions PENDING → ACTIVE with check-in/out dates and issues grant', async () => {
       const result = await service.approve('existing-id', {
         checkInDt: new Date('2026-08-22T14:00:00Z'),
         checkOutDt: new Date('2026-08-24T11:00:00Z'),
@@ -132,6 +137,14 @@ describe('IdentityService', () => {
       expect(updateData.approvedById).toBe('staff-001');
       expect(audit.log).toHaveBeenCalledWith(
         expect.objectContaining({ action: 'IDENTITY_APPROVED' }),
+      );
+      // Verify grant was issued
+      expect(access.issueGrant).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subjectId: 'existing-id',
+          grantType: 'HOTEL_STAY',
+          privileges: ['CALLING', 'WIFI', 'SERVICE_REQUEST'],
+        }),
       );
     });
 

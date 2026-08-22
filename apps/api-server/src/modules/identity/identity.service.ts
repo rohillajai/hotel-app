@@ -4,11 +4,13 @@ import {
   ConflictException,
   NotFoundException,
   BadRequestException,
+  forwardRef,
 } from '@nestjs/common';
 import type { PrismaClient, IdentityRecord } from '@hotel-app/db';
 import { DefaultIdentityMatchingRule, type MatchingKeySet } from '@hotel-app/core';
 import { PRISMA_TOKEN } from '../database/database.module';
 import { AuditService } from '../audit/audit.service';
+import { AccessService } from '../access/access.service';
 
 export interface CreateIdentityParams {
   tenantId: string;
@@ -32,6 +34,7 @@ export class IdentityService {
   constructor(
     @Inject(PRISMA_TOKEN) private readonly db: PrismaClient,
     private readonly auditService: AuditService,
+    @Inject(forwardRef(() => AccessService)) private readonly accessService: AccessService,
   ) {}
 
   // ─── Create (Path A — admin-initiated) ────────────────────────────────────
@@ -147,6 +150,18 @@ export class IdentityService {
       entityId: identityId,
       before: { status: 'PENDING' },
       after: { status: 'ACTIVE', check_in_dt: params.checkInDt, check_out_dt: params.checkOutDt },
+    });
+
+    // Issue access grant — this enables calling, WiFi, and service requests
+    await this.accessService.issueGrant({
+      tenantId: identity.tenantId,
+      subjectId: identityId,
+      grantType: 'HOTEL_STAY',
+      privileges: ['CALLING', 'WIFI', 'SERVICE_REQUEST'],
+      validFrom: params.checkInDt,
+      validUntil: params.checkOutDt,
+      metadata: { room_number: params.roomNumber },
+      issuedById: params.approvedById,
     });
 
     return updated;

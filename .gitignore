@@ -48,3 +48,4 @@ infra/terraform/*.tfvars
 # Misc
 *.tsbuildinfo
 infra/deploy/.env.prod
+infra/deploy/.env.prod

@@ -116,7 +116,7 @@ async function main() {
       name: 'The Grand Pilot Hotel',
       tenantType: 'HOTEL',
       config: {
-        checkin_mode: 'STAFF_CONFIRM', // change to AUTO_APPROVE for fully self-serve
+        checkin_mode: 'AUTO_APPROVE', // guests check in without staff review
         dedup_rules: {
           match_any: ['booking_ref', 'full_name'],
         },

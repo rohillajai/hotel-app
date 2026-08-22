@@ -1,15 +1,17 @@
-FROM node:20-alpine AS base
+FROM node:20-alpine AS builder
 RUN npm install -g pnpm@9
 
+ARG NEXT_PUBLIC_API_URL=http://localhost:3001
+
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc .pnpmfile.cjs tsconfig.base.json ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY packages/config/package.json packages/config/
 COPY packages/core/package.json packages/core/
 COPY packages/ui/package.json packages/ui/
 COPY packages/api-client/package.json packages/api-client/
 COPY apps/admin-web/package.json apps/admin-web/
 
-RUN pnpm install --no-frozen-lockfile --prod=false
+RUN pnpm install --frozen-lockfile
 
 COPY packages/ packages/
 COPY apps/admin-web/ apps/admin-web/
@@ -17,10 +19,17 @@ COPY apps/admin-web/ apps/admin-web/
 RUN pnpm --filter @hotel-app/config build
 RUN pnpm --filter @hotel-app/core build
 
-ENV NEXT_PUBLIC_API_URL=https://api.epbx.negd.in
-ENV NEXT_PUBLIC_SIGNALING_URL=https://signal.epbx.negd.in
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
 RUN pnpm --filter @hotel-app/admin-web build
 
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+COPY --from=builder /app/apps/admin-web/.next/standalone ./
+COPY --from=builder /app/apps/admin-web/.next/static ./apps/admin-web/.next/static
+COPY --from=builder /app/apps/admin-web/public ./apps/admin-web/public
+
+ENV PORT=3004
 EXPOSE 3004
-CMD ["pnpm", "--filter", "@hotel-app/admin-web", "start"]
+CMD ["node", "apps/admin-web/server.js"]

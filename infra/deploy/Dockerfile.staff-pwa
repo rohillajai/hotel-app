@@ -1,15 +1,18 @@
-FROM node:20-alpine AS base
+FROM node:20-alpine AS builder
 RUN npm install -g pnpm@9
 
+ARG NEXT_PUBLIC_API_URL=http://localhost:3001
+ARG NEXT_PUBLIC_SIGNALING_URL=http://localhost:3002
+
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc .pnpmfile.cjs tsconfig.base.json ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY packages/config/package.json packages/config/
 COPY packages/core/package.json packages/core/
 COPY packages/ui/package.json packages/ui/
 COPY packages/api-client/package.json packages/api-client/
 COPY apps/staff-pwa/package.json apps/staff-pwa/
 
-RUN pnpm install --no-frozen-lockfile --prod=false
+RUN pnpm install --frozen-lockfile
 
 COPY packages/ packages/
 COPY apps/staff-pwa/ apps/staff-pwa/
@@ -17,10 +20,18 @@ COPY apps/staff-pwa/ apps/staff-pwa/
 RUN pnpm --filter @hotel-app/config build
 RUN pnpm --filter @hotel-app/core build
 
-ENV NEXT_PUBLIC_API_URL=https://api.epbx.negd.in
-ENV NEXT_PUBLIC_SIGNALING_URL=https://signal.epbx.negd.in
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_SIGNALING_URL=$NEXT_PUBLIC_SIGNALING_URL
 
 RUN pnpm --filter @hotel-app/staff-pwa build
 
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+COPY --from=builder /app/apps/staff-pwa/.next/standalone ./
+COPY --from=builder /app/apps/staff-pwa/.next/static ./apps/staff-pwa/.next/static
+COPY --from=builder /app/apps/staff-pwa/public ./apps/staff-pwa/public
+
+ENV PORT=3003
 EXPOSE 3003
-CMD ["pnpm", "--filter", "@hotel-app/staff-pwa", "start"]
+CMD ["node", "apps/staff-pwa/server.js"]

@@ -1,6 +1,7 @@
 ###############################################################################
-# Production Docker Compose — Single EC2 (15.207.160.237)
+# Production Docker Compose — Single EC2 (13.207.8.37)
 # Domain: epbx.negd.in
+# Everything runs here: DB, Redis, API, Signaling, coturn, 3 frontends, Caddy
 ###############################################################################
 name: hotel-app-prod
 
@@ -38,7 +39,7 @@ services:
     networks:
       - backend
 
-  # ─── API Server ─────────────────────────────────────────────────────────────
+  # ─── API Server (NestJS) ────────────────────────────────────────────────────
   api-server:
     build:
       context: ../..
@@ -57,7 +58,7 @@ services:
     networks:
       - backend
 
-  # ─── Signaling Server ───────────────────────────────────────────────────────
+  # ─── Signaling Server (Socket.io) ──────────────────────────────────────────
   signaling-server:
     build:
       context: ../..
@@ -75,41 +76,55 @@ services:
     networks:
       - backend
 
-  # ─── coturn ─────────────────────────────────────────────────────────────────
+  # ─── Guest PWA (Next.js) ───────────────────────────────────────────────────
+  guest-pwa:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.guest-pwa
+      args:
+        NEXT_PUBLIC_API_URL: https://api.epbx.negd.in
+        NEXT_PUBLIC_SIGNALING_URL: https://signal.epbx.negd.in
+    restart: always
+    environment:
+      PORT: "3000"
+    networks:
+      - backend
+
+  # ─── Staff PWA (Next.js) ───────────────────────────────────────────────────
+  staff-pwa:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.staff-pwa
+      args:
+        NEXT_PUBLIC_API_URL: https://api.epbx.negd.in
+        NEXT_PUBLIC_SIGNALING_URL: https://signal.epbx.negd.in
+    restart: always
+    environment:
+      PORT: "3003"
+    networks:
+      - backend
+
+  # ─── Admin Web (Next.js) ───────────────────────────────────────────────────
+  admin-web:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.admin-web
+      args:
+        NEXT_PUBLIC_API_URL: https://api.epbx.negd.in
+    restart: always
+    environment:
+      PORT: "3004"
+    networks:
+      - backend
+
+  # ─── coturn (STUN/TURN) ────────────────────────────────────────────────────
   coturn:
     image: coturn/coturn:latest
     restart: always
     network_mode: host
     volumes:
       - ./coturn/turnserver.prod.conf:/etc/coturn/turnserver.conf:ro
-    command: -c /etc/coturn/turnserver.conf --static-auth-secret=${COTURN_SECRET} --external-ip=15.207.160.237
-
-  # ─── Guest PWA ─────────────────────────────────────────────────────────────
-  guest-pwa:
-    build:
-      context: ../..
-      dockerfile: infra/deploy/Dockerfile.guest-pwa
-    restart: always
-    networks:
-      - backend
-
-  # ─── Staff PWA ─────────────────────────────────────────────────────────────
-  staff-pwa:
-    build:
-      context: ../..
-      dockerfile: infra/deploy/Dockerfile.staff-pwa
-    restart: always
-    networks:
-      - backend
-
-  # ─── Admin Web ─────────────────────────────────────────────────────────────
-  admin-web:
-    build:
-      context: ../..
-      dockerfile: infra/deploy/Dockerfile.admin-web
-    restart: always
-    networks:
-      - backend
+    command: -c /etc/coturn/turnserver.conf --static-auth-secret=${COTURN_SECRET} --external-ip=13.207.8.37
 
   # ─── Caddy (reverse proxy + auto Let's Encrypt HTTPS) ──────────────────────
   caddy:

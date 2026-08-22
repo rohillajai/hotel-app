@@ -2,70 +2,52 @@
 set -euo pipefail
 
 ###############################################################################
-# deploy.sh — Run this on the EC2 instance to deploy/update the app
-# Usage: cd /opt/hotel-app && ./deploy.sh
+# Deploy script — run on EC2 at /opt/hotel-app/infra/deploy
 ###############################################################################
 
-REPO_URL="https://github.com/YOUR_USERNAME/Hotel_APP.git"  # UPDATE THIS
-BRANCH="main"
-APP_DIR="/opt/hotel-app"
+echo "=== Hotel App Deployment ==="
+cd /opt/hotel-app/infra/deploy
 
-echo "=== Deploying Hotel App ==="
-echo "Time: $(date)"
-
-# Pull latest code
-if [ -d "$APP_DIR/repo" ]; then
-  echo "=== Pulling latest changes ==="
-  cd "$APP_DIR/repo"
-  git pull origin "$BRANCH"
-else
-  echo "=== Cloning repository ==="
-  git clone -b "$BRANCH" "$REPO_URL" "$APP_DIR/repo"
-  cd "$APP_DIR/repo"
-fi
-
-# Copy env file if not exists
-if [ ! -f "infra/deploy/.env.prod" ]; then
-  echo "ERROR: infra/deploy/.env.prod not found!"
-  echo "Copy .env.prod.example to .env.prod and fill in your secrets first."
+# Verify .env.prod exists
+if [ ! -f .env.prod ]; then
+  echo "ERROR: .env.prod not found. Copy .env.prod.example and fill in values."
   exit 1
 fi
 
-# Build and start
-echo "=== Building and starting services ==="
-cd infra/deploy
-docker compose -f docker-compose.prod.yml build --no-cache
-docker compose -f docker-compose.prod.yml up -d
+echo "=== Building and starting all services ==="
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 
-# Run database migrations
+echo "=== Waiting for PostgreSQL to be ready ==="
+sleep 15
+
 echo "=== Running database migrations ==="
-docker compose -f docker-compose.prod.yml exec api-server \
-  node -e "
-    const { execSync } = require('child_process');
-    execSync('npx prisma migrate deploy --schema=/app/packages/db/prisma/schema.prisma', {
-      stdio: 'inherit',
-      env: { ...process.env }
-    });
-  "
+docker compose -f docker-compose.prod.yml exec -T api-server \
+  npx prisma migrate deploy --schema=/app/packages/db/prisma/schema.prisma || {
+    echo "Migration failed — attempting fresh setup..."
+    docker compose -f docker-compose.prod.yml exec -T api-server \
+      npx prisma db push --schema=/app/packages/db/prisma/schema.prisma --accept-data-loss
+  }
 
-# Run seed (only first time — safe to re-run)
 echo "=== Seeding database ==="
-docker compose -f docker-compose.prod.yml exec api-server \
+docker compose -f docker-compose.prod.yml exec -T api-server \
   node -e "
     const { execSync } = require('child_process');
     try {
-      execSync('npx ts-node --project /app/packages/db/tsconfig.seed.json /app/packages/db/prisma/seed.ts', {
-        stdio: 'inherit',
-        env: { ...process.env }
-      });
-    } catch(e) { console.log('Seed may have already run — skipping'); }
-  "
+      execSync('npx ts-node --project /app/packages/db/tsconfig.seed.json /app/packages/db/prisma/seed.ts', { stdio: 'inherit', cwd: '/app' });
+    } catch(e) {
+      console.log('Seed skipped (likely already seeded)');
+    }
+  " || echo "Seed completed or skipped"
 
 echo ""
-echo "=== Deployment complete ==="
-echo "Services running:"
+echo "=== Deployment complete! ==="
+echo ""
 docker compose -f docker-compose.prod.yml ps
 echo ""
-echo "API:       https://api.epbx.negd.in"
-echo "Signaling: https://signal.epbx.negd.in"
-echo "TURN:      turn:15.207.160.237:3478"
+echo "Services:"
+echo "  API:       https://api.epbx.negd.in/health"
+echo "  Guest:     https://guest.epbx.negd.in"
+echo "  Staff:     https://staff.epbx.negd.in"
+echo "  Admin:     https://admin.epbx.negd.in"
+echo "  Signal:    https://signal.epbx.negd.in"
+echo "  TURN:      turn.epbx.negd.in:3478"

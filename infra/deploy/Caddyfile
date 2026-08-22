@@ -1,7 +1,6 @@
-# Caddy reverse proxy — serves everything from one EC2
-# Auto-provisions Let's Encrypt HTTPS certs for all subdomains
+# Caddy reverse proxy — auto Let's Encrypt HTTPS for all subdomains
+# All services run on this single EC2 instance
 
-# API Server
 api.epbx.negd.in {
     reverse_proxy api-server:3001
     header {
@@ -11,22 +10,18 @@ api.epbx.negd.in {
     }
 }
 
-# Signaling Server (WebSocket)
 signal.epbx.negd.in {
     reverse_proxy signaling-server:3002
 }
 
-# Guest PWA
 guest.epbx.negd.in {
     reverse_proxy guest-pwa:3000
 }
 
-# Staff PWA
 staff.epbx.negd.in {
     reverse_proxy staff-pwa:3003
 }
 
-# Admin Dashboard
 admin.epbx.negd.in {
     reverse_proxy admin-web:3004
 }
