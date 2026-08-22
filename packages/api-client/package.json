@@ -1,0 +1,28 @@
+{
+  "name": "@hotel-app/api-client",
+  "version": "0.0.1",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run",
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.59.0",
+    "zod": "^3.23.8"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.11",
+    "@types/node": "^22.7.5",
+    "vitest": "^2.1.2",
+    "typescript": "^5.6.3"
+  }
+}

@@ -1,0 +1,22 @@
+# ─── Caddy reverse proxy ──────────────────────────────────────────────────────
+# Auto-provisions HTTPS certificates via Let's Encrypt
+# No need for ACM or manual cert management
+
+api.epbx.negd.in {
+    reverse_proxy api-server:3001
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+    }
+}
+
+signal.epbx.negd.in {
+    reverse_proxy signaling-server:3002
+    # WebSocket support is automatic in Caddy
+}
+
+turn.epbx.negd.in {
+    # Health check page for coturn (coturn itself uses UDP, not HTTP)
+    respond "coturn healthy" 200
+}

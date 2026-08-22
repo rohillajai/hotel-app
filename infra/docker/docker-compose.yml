@@ -1,0 +1,117 @@
+name: hotel-app-dev
+
+services:
+  # ─── PostgreSQL 15 ───────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: hotel-postgres
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - hotel-dev
+
+  # ─── Redis 7 ─────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: hotel-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - hotel-dev
+
+  # ─── MinIO (S3-compatible local object storage) ───────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: hotel-minio
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - hotel-dev
+
+  # ─── MinIO bucket initializer (runs once, then exits) ─────────────────────
+  minio-init:
+    image: minio/mc:latest
+    container_name: hotel-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    env_file: .env
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+      mc mb --ignore-existing local/hotel-kyc-docs;
+      mc mb --ignore-existing local/hotel-app-assets;
+      mc anonymous set none local/hotel-kyc-docs;
+      mc anonymous set none local/hotel-app-assets;
+      echo 'MinIO buckets ready';
+      "
+    networks:
+      - hotel-dev
+
+  # ─── coturn STUN/TURN server ──────────────────────────────────────────────
+  coturn:
+    image: coturn/coturn:latest
+    container_name: hotel-coturn
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command: -c /etc/coturn/turnserver.conf
+    healthcheck:
+      test: ["CMD-SHELL", "turnutils_uclient -T -p 3478 127.0.0.1 2>&1 | grep -q 'success\\|connected' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  minio_data:
+    driver: local
+
+networks:
+  hotel-dev:
+    driver: bridge

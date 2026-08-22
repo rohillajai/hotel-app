@@ -1,0 +1,533 @@
+// ─── Prisma Schema ────────────────────────────────────────────────────────────
+// Hotel App — Phase 1
+// All models are designed for multi-tenancy and Phase 2 forward-compatibility.
+// See design.md §3 for full rationale.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum TenantType {
+  HOTEL
+  GOVT   // Phase 2 — schema supports it, UI not built
+  OFFICE // Phase 3
+}
+
+enum EntityType {
+  GUEST
+  STAFF
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum IdentityStatus {
+  PENDING     // Self-registered, awaiting staff approval
+  ACTIVE      // Approved and usable
+  REJECTED    // Rejected by approver
+  MERGED      // Deduplicated — merged_into points to the canonical record
+  DEACTIVATED // Manually deactivated (staff offboarding etc.)
+}
+
+enum RegistrationPath {
+  A // Approver-initiated: admin creates and activates directly
+  B // Self-registration + approval flow
+}
+
+enum OrgUnitType {
+  ORGANIZATION // Root — "The Grand Hotel", "Ministry of Finance"
+  DEPARTMENT   // Reception, Housekeeping, Room Service
+  TEAM         // Phase 2+ sub-department
+  DIVISION     // Phase 2+ ministry division
+}
+
+enum GrantStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+  SUSPENDED
+}
+
+enum GrantType {
+  HOTEL_STAY  // Time-boxed Phase 1 guest
+  STAFF_ROLE  // Indefinite Phase 1 staff
+  GOVT_USER   // Indefinite Phase 2
+  OFFICE_USER // Indefinite Phase 3
+}
+
+enum WifiVoucherStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum CallOutcome {
+  ANSWERED
+  MISSED
+  REJECTED
+  FAILED
+}
+
+enum AbuseReportStatus {
+  OPEN
+  REVIEWED
+  ACTIONED
+}
+
+enum ServiceRequestStatus {
+  SUBMITTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum PurposeCategory {
+  KYC_DOCUMENT
+  BOOKING_PROFILE
+  CALL_METADATA
+  SERVICE_REQUEST
+  PUSH_SUBSCRIPTION
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TENANTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Tenant {
+  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String     @db.VarChar(255)
+  tenantType TenantType @map("tenant_type")
+
+  /// Per-tenant config blob. Schema varies by tenantType.
+  /// Hotel: { checkin_mode, dedup_rules, wifi, call_rate_limit, departments }
+  config Json @default("{}") @db.JsonB
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  identityRecords    IdentityRecord[]
+  orgUnits           OrgUnit[]
+  accessGrants       AccessGrant[]
+  wifiVouchers       WifiVoucher[]
+  callLogs           CallLog[]
+  abuseReports       AbuseReport[]
+  serviceRequests    ServiceRequest[]
+  retentionRules     RetentionRule[]
+  dataSubjectRecords DataSubjectRecord[]
+  auditLogs          AuditLog[]
+  pushSubscriptions  PushSubscription[]
+
+  @@map("tenants")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IDENTITY & ONBOARDING ENGINE
+// ─────────────────────────────────────────────────────────────────────────────
+
+model IdentityRecord {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  entityType       EntityType       @map("entity_type")
+  status           IdentityStatus   @default(PENDING)
+  registrationPath RegistrationPath @map("registration_path")
+
+  /// Flexible profile blob — schema depends on entityType + tenantType.
+  /// GUEST/HOTEL:  { full_name, mobile, booking_ref, room_number, check_in_dt, check_out_dt }
+  /// STAFF/HOTEL:  { full_name, email, password_hash, department }
+  /// Phase 2 GOVT: { full_name, email, employee_id, designation, ministry_id }
+  profile Json @default("{}") @db.JsonB
+
+  /// SHA-256 of (tenant_id + sorted matching key=value pairs).
+  /// Used for fast deduplication queries before record creation.
+  dedupHash String? @map("dedup_hash") @db.VarChar(64)
+
+  // Self-referential: who created this record
+  createdById String?          @map("created_by") @db.Uuid
+  createdBy   IdentityRecord?  @relation("CreatedBy", fields: [createdById], references: [id])
+  createdByOf IdentityRecord[] @relation("CreatedBy")
+
+  // Self-referential: who approved this record
+  approvedById String?          @map("approved_by") @db.Uuid
+  approvedBy   IdentityRecord?  @relation("ApprovedBy", fields: [approvedById], references: [id])
+  approvedByOf IdentityRecord[] @relation("ApprovedBy")
+
+  approvedAt DateTime? @map("approved_at") @db.Timestamptz()
+
+  // Self-referential: deduplication — points to the canonical record
+  mergedIntoId String?          @map("merged_into") @db.Uuid
+  mergedInto   IdentityRecord?  @relation("MergedInto", fields: [mergedIntoId], references: [id])
+  mergedFrom   IdentityRecord[] @relation("MergedInto")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  // Downstream relations
+  directoryEntries    DirectoryEntry[]
+  accessGrantsHeld    AccessGrant[]     @relation("GrantSubject")
+  accessGrantsRevoked AccessGrant[]     @relation("GrantRevokedBy")
+  wifiVouchers        WifiVoucher[]
+  callLogsAsCaller    CallLog[]         @relation("CallLogCaller")
+  callLogsAsCallee    CallLog[]         @relation("CallLogCallee")
+  abuseReportsBy      AbuseReport[]     @relation("AbuseReporter")
+  abuseReportsAbout   AbuseReport[]     @relation("AbuseSubject")
+  serviceRequests     ServiceRequest[]  @relation("ServiceRequestGuest")
+  serviceRequestsAssigned ServiceRequest[] @relation("ServiceRequestAssignee")
+  refreshTokens       RefreshToken[]
+  dataSubjectRecords  DataSubjectRecord[]
+  pushSubscriptions   PushSubscription[]
+  auditLogsAsActor    AuditLog[]        @relation("AuditActor")
+
+  @@index([tenantId, status], name: "idx_identity_tenant_status")
+  @@index([tenantId, dedupHash], name: "idx_identity_dedup")
+  @@index([tenantId, entityType], name: "idx_identity_tenant_type")
+  @@map("identity_records")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DIRECTORY SERVICE
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Hierarchical org units. parentId = null means root organisation.
+/// Phase 1: Hotel (root) → Department (2 levels)
+/// Phase 2: Ministry → Department → Division → Team (4 levels, no migration needed)
+model OrgUnit {
+  id       String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String      @map("tenant_id") @db.Uuid
+  tenant   Tenant      @relation(fields: [tenantId], references: [id])
+
+  parentId String?   @map("parent_id") @db.Uuid
+  parent   OrgUnit?  @relation("OrgUnitHierarchy", fields: [parentId], references: [id])
+  children OrgUnit[] @relation("OrgUnitHierarchy")
+
+  name     String      @db.VarChar(255)
+  unitType OrgUnitType @map("unit_type")
+  metadata Json        @default("{}") @db.JsonB
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  directoryEntries DirectoryEntry[]
+
+  @@index([tenantId, parentId], name: "idx_org_unit_tenant_parent")
+  @@map("org_units")
+}
+
+model DirectoryEntry {
+  id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String  @map("tenant_id") @db.Uuid
+  orgUnitId  String  @map("org_unit_id") @db.Uuid
+  identityId String  @map("identity_id") @db.Uuid
+
+  orgUnit  OrgUnit        @relation(fields: [orgUnitId], references: [id])
+  identity IdentityRecord @relation(fields: [identityId], references: [id])
+
+  /// Designation enables Phase 2 "search by role" without schema migration.
+  /// GIN index on (displayName || designation) added via raw SQL in migration.
+  designation String? @db.VarChar(255)
+  displayName String  @map("display_name") @db.VarChar(255)
+  isActive    Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@index([orgUnitId, isActive], name: "idx_dir_org_unit")
+  @@index([tenantId, isActive], name: "idx_dir_tenant_active")
+  @@map("directory_entries")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ACCESS CONTROL / GRANT ENGINE
+// ─────────────────────────────────────────────────────────────────────────────
+
+model AccessGrant {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  subjectId String         @map("subject_id") @db.Uuid
+  subject   IdentityRecord @relation("GrantSubject", fields: [subjectId], references: [id])
+
+  grantType  GrantType   @map("grant_type")
+  privileges String[]
+  status     GrantStatus @default(ACTIVE)
+
+  validFrom  DateTime  @map("valid_from") @db.Timestamptz()
+  /// NULL = indefinite grant (Phase 2 govt/office). Never force an expiry.
+  validUntil DateTime? @map("valid_until") @db.Timestamptz()
+
+  /// Restrict calling independently without revoking the whole grant
+  callingRestricted Boolean @default(false) @map("calling_restricted")
+
+  revokedAt    DateTime?       @map("revoked_at") @db.Timestamptz()
+  revokedById  String?         @map("revoked_by") @db.Uuid
+  revokedBy    IdentityRecord? @relation("GrantRevokedBy", fields: [revokedById], references: [id])
+  revokeReason String?         @map("revoke_reason") @db.VarChar(255)
+
+  metadata Json @default("{}") @db.JsonB
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  wifiVouchers WifiVoucher[]
+
+  @@index([subjectId, status], name: "idx_grant_subject")
+  // Partial index for expiry job added via raw SQL:
+  // CREATE INDEX idx_grant_expiry ON access_grants(valid_until, status) WHERE valid_until IS NOT NULL;
+  @@map("access_grants")
+}
+
+model WifiVoucher {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @map("tenant_id") @db.Uuid
+  grantId   String @map("grant_id") @db.Uuid
+  subjectId String @map("subject_id") @db.Uuid
+
+  tenant  Tenant         @relation(fields: [tenantId], references: [id])
+  grant   AccessGrant    @relation(fields: [grantId], references: [id])
+  subject IdentityRecord @relation(fields: [subjectId], references: [id])
+
+  ssid       String            @db.VarChar(255)
+  /// Application-layer encrypted before storage
+  credential String            @db.VarChar(255)
+  status     WifiVoucherStatus @default(ACTIVE)
+  /// Controller-assigned ID for WiFi controller API revocation (future UniFi/Meraki)
+  externalId String?           @map("external_id") @db.VarChar(255)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@index([grantId], name: "idx_wifi_grant")
+  @@index([subjectId, status], name: "idx_wifi_subject")
+  @@map("wifi_vouchers")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALLING ENGINE
+// ─────────────────────────────────────────────────────────────────────────────
+
+model CallLog {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  callerId String         @map("caller_id") @db.Uuid
+  caller   IdentityRecord @relation("CallLogCaller", fields: [callerId], references: [id])
+
+  /// Phase 1: department called. Phase 2: may be null (person-to-person routing).
+  calleeDept String? @map("callee_dept") @db.VarChar(50)
+
+  calleeId String?         @map("callee_id") @db.Uuid
+  callee   IdentityRecord? @relation("CallLogCallee", fields: [calleeId], references: [id])
+
+  /// Room number shown to staff — NOT the guest's phone number (privacy)
+  roomIdentifier String? @map("room_identifier") @db.VarChar(50)
+
+  /// Client-generated UUID to correlate signaling events with this log row
+  callId String @map("call_id") @db.Uuid
+
+  initiatedAt  DateTime     @map("initiated_at") @db.Timestamptz()
+  answeredAt   DateTime?    @map("answered_at") @db.Timestamptz()
+  endedAt      DateTime?    @map("ended_at") @db.Timestamptz()
+  durationSecs Int?         @map("duration_secs")
+  outcome      CallOutcome?
+  turnRelayed  Boolean      @default(false) @map("turn_relayed")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  abuseReports AbuseReport[]
+
+  @@index([tenantId, callerId], name: "idx_call_log_caller")
+  @@index([tenantId, calleeDept], name: "idx_call_log_dept")
+  @@index([tenantId, initiatedAt], name: "idx_call_log_time")
+  @@index([callId], name: "idx_call_log_call_id")
+  @@map("call_logs")
+}
+
+model AbuseReport {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  reportedById String         @map("reported_by") @db.Uuid
+  reportedBy   IdentityRecord @relation("AbuseReporter", fields: [reportedById], references: [id])
+
+  subjectId String         @map("subject_id") @db.Uuid
+  subject   IdentityRecord @relation("AbuseSubject", fields: [subjectId], references: [id])
+
+  callId String?   @map("call_id") @db.Uuid
+  call   CallLog?  @relation(fields: [callId], references: [id])
+
+  reason String            @db.Text
+  status AbuseReportStatus @default(OPEN)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@index([tenantId, status], name: "idx_abuse_tenant_status")
+  @@index([subjectId], name: "idx_abuse_subject")
+  @@map("abuse_reports")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SERVICE REQUESTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ServiceRequest {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  guestId String         @map("guest_id") @db.Uuid
+  guest   IdentityRecord @relation("ServiceRequestGuest", fields: [guestId], references: [id])
+
+  department String               @db.VarChar(50)
+  category   String               @db.VarChar(50)
+  details    Json                 @default("{}") @db.JsonB
+  status     ServiceRequestStatus @default(SUBMITTED)
+
+  assignedToId String?          @map("assigned_to") @db.Uuid
+  assignedTo   IdentityRecord?  @relation("ServiceRequestAssignee", fields: [assignedToId], references: [id])
+
+  roomIdentifier String @map("room_identifier") @db.VarChar(50)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  dataSubjectRecords DataSubjectRecord[]
+
+  @@index([tenantId, department, status], name: "idx_svc_dept_status")
+  @@index([guestId, status], name: "idx_svc_guest")
+  @@map("service_requests")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTHENTICATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+model RefreshToken {
+  id        String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subjectId String         @map("subject_id") @db.Uuid
+  subject   IdentityRecord @relation(fields: [subjectId], references: [id])
+
+  /// SHA-256 hash of the raw token — raw token is never persisted
+  tokenHash String    @unique @map("token_hash") @db.VarChar(64)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz()
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz()
+
+  userAgent String? @map("user_agent") @db.VarChar(500)
+  ipAddress String? @map("ip_address") @db.VarChar(45)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([subjectId, revokedAt], name: "idx_refresh_subject")
+  @@map("refresh_tokens")
+}
+
+model PushSubscription {
+  id         String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String         @map("tenant_id") @db.Uuid
+  tenant     Tenant         @relation(fields: [tenantId], references: [id])
+  identityId String         @map("identity_id") @db.Uuid
+  identity   IdentityRecord @relation(fields: [identityId], references: [id])
+
+  /// Web Push subscription JSON: { endpoint, keys: { p256dh, auth } }
+  subscription Json @db.JsonB
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@index([identityId], name: "idx_push_identity")
+  @@map("push_subscriptions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONSENT & RETENTION ENGINE (DPDP-aware)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Retention rules drive the erasure job. No retention logic is hardcoded.
+/// tenantId = null means this is a platform-wide default rule.
+model RetentionRule {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String?         @map("tenant_id") @db.Uuid
+  tenant          Tenant?         @relation(fields: [tenantId], references: [id])
+
+  purposeCategory PurposeCategory @map("purpose_category")
+  retentionDays   Int             @map("retention_days")
+  /// statutory = true: cannot be overridden by a guest deletion request
+  statutory       Boolean         @default(false)
+  description     String?         @db.Text
+
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@unique([tenantId, purposeCategory], name: "uq_retention_tenant_category")
+  @@map("retention_rules")
+}
+
+/// Tracks every individual data item per subject per purpose.
+/// The nightly erasure job queries this to find what to delete.
+model DataSubjectRecord {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @map("tenant_id") @db.Uuid
+  tenant    Tenant @relation(fields: [tenantId], references: [id])
+
+  subjectId String         @map("subject_id") @db.Uuid
+  subject   IdentityRecord @relation(fields: [subjectId], references: [id])
+
+  purposeCategory PurposeCategory @map("purpose_category")
+  /// S3 key for document records; DB row UUID for structured data records
+  dataRef         String          @map("data_ref") @db.VarChar(500)
+
+  expiresAt      DateTime? @map("expires_at") @db.Timestamptz()
+  erasedAt       DateTime? @map("erased_at") @db.Timestamptz()
+  /// true when a statutory rule prevents erasure despite guest request
+  erasureBlocked Boolean   @default(false) @map("erasure_blocked")
+
+  serviceRequestId String?         @map("service_request_id") @db.Uuid
+  serviceRequest   ServiceRequest? @relation(fields: [serviceRequestId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([subjectId, purposeCategory], name: "idx_dsr_subject_cat")
+  // Partial index for erasure job added via raw SQL in migration:
+  // CREATE INDEX idx_dsr_expiry ON data_subject_records(expires_at)
+  //   WHERE erased_at IS NULL AND erasure_blocked = FALSE;
+  @@map("data_subject_records")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUDIT LOG (append-only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  actorId String?         @map("actor_id") @db.Uuid
+  actor   IdentityRecord? @relation("AuditActor", fields: [actorId], references: [id])
+
+  action     String @db.VarChar(100) // IDENTITY_APPROVED, GRANT_REVOKED, CHECKOUT, etc.
+  entityType String @map("entity_type") @db.VarChar(50)
+  entityId   String @map("entity_id") @db.Uuid
+
+  before Json? @db.JsonB // state before (null for creates)
+  after  Json? @db.JsonB // state after (null for deletes)
+  meta   Json  @default("{}") @db.JsonB // IP, userAgent, requestId
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, entityType, entityId], name: "idx_audit_entity")
+  @@index([tenantId, actorId], name: "idx_audit_actor")
+  @@index([tenantId, createdAt], name: "idx_audit_time")
+  @@map("audit_logs")
+}

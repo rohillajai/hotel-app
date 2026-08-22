@@ -1,0 +1,49 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Build outputs
+dist
+.next
+out
+build
+
+# Turbo
+.turbo
+
+# Environment files — never commit real secrets
+.env
+.env.local
+.env.production
+.env.staging
+# .env.example IS committed (safe template)
+
+# Prisma
+packages/db/prisma/migrations/*/migration.sql
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode
+.idea
+*.swp
+
+# Test coverage
+coverage
+
+# AWS / Terraform state — never commit
+infra/terraform/.terraform
+infra/terraform/terraform.tfstate
+infra/terraform/terraform.tfstate.backup
+infra/terraform/*.tfvars
+!infra/terraform/*.tfvars.example
+
+# Misc
+*.tsbuildinfo

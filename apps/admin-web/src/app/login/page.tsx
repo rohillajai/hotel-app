@@ -1,0 +1,38 @@
+'use client';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { apiFetch } from '@/lib/api';
+import { useAuth } from '@/context/auth-context';
+
+export default function AdminLogin() {
+  const router = useRouter();
+  const { login } = useAuth();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault(); setError(''); setLoading(true);
+    try {
+      const res = await apiFetch<{ access_token: string; refresh_token: string; identity_id: string }>('/auth/staff/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+      login(res.access_token, res.refresh_token, res.identity_id);
+      router.replace('/dashboard');
+    } catch (err: any) { setError(err.message); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <main style={{ maxWidth: '24rem', margin: '6rem auto', padding: '1rem' }}>
+      <div style={{ background: '#fff', borderRadius: '0.75rem', padding: '2rem', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '1.5rem', textAlign: 'center' }}>Admin Login</h1>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required style={{ padding: '0.75rem', borderRadius: '0.5rem', border: '1px solid #d1d5db' }} />
+          <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required style={{ padding: '0.75rem', borderRadius: '0.5rem', border: '1px solid #d1d5db' }} />
+          {error && <p style={{ color: '#dc2626', fontSize: '0.875rem' }}>{error}</p>}
+          <button type="submit" disabled={loading} style={{ padding: '0.875rem', borderRadius: '0.5rem', background: '#1e40af', color: '#fff', fontWeight: 600, border: 'none', cursor: 'pointer' }}>{loading ? 'Logging in...' : 'Login'}</button>
+        </form>
+      </div>
+    </main>
+  );
+}

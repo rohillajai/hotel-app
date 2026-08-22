@@ -1,0 +1,30 @@
+{
+  "name": "@hotel-app/signaling-server",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hotel-app/config": "workspace:*",
+    "@hotel-app/core": "workspace:*",
+    "socket.io": "^4.8.0",
+    "ioredis": "^5.4.1",
+    "jsonwebtoken": "^9.0.2",
+    "axios": "^1.7.7",
+    "express": "^4.21.1"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.7.5",
+    "ts-node-dev": "^2.0.0",
+    "vitest": "^2.1.2",
+    "typescript": "^5.6.3"
+  }
+}

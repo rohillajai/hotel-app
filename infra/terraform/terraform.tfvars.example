@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars and fill in real values (gitignored)
+aws_region          = "ap-south-1"
+project_name        = "hotel-app"
+environment         = "production"
+db_password         = "CHANGE_ME_strong_password_here"
+jwt_secret          = "CHANGE_ME_min_32_chars_random"
+jwt_refresh_secret  = "CHANGE_ME_min_32_chars_random"
+coturn_secret       = "CHANGE_ME_min_16_chars_random"
+signaling_internal_secret = "CHANGE_ME_min_32_chars_random"
+ec2_key_name        = "hotel-app-prod"
+acm_certificate_arn = ""

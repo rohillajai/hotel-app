@@ -1,0 +1,56 @@
+# ─── API Server Dockerfile ────────────────────────────────────────────────────
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+RUN npm install -g pnpm@9
+
+# Copy workspace files
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY packages/config/package.json ./packages/config/
+COPY packages/core/package.json ./packages/core/
+COPY packages/db/package.json ./packages/db/
+COPY apps/api-server/package.json ./apps/api-server/
+
+# Install dependencies
+RUN pnpm install --frozen-lockfile
+
+# Copy source
+COPY packages/config/ ./packages/config/
+COPY packages/core/ ./packages/core/
+COPY packages/db/ ./packages/db/
+COPY apps/api-server/ ./apps/api-server/
+
+# Build
+RUN pnpm --filter @hotel-app/config build
+RUN pnpm --filter @hotel-app/core build
+RUN pnpm --filter @hotel-app/db db:generate
+RUN pnpm --filter @hotel-app/db build
+RUN pnpm --filter @hotel-app/api-server build
+
+# ─── Production image ─────────────────────────────────────────────────────────
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+RUN npm install -g pnpm@9
+
+COPY --from=builder /app/package.json /app/pnpm-workspace.yaml /app/pnpm-lock.yaml /app/.npmrc ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages/config/dist ./packages/config/dist
+COPY --from=builder /app/packages/config/package.json ./packages/config/
+COPY --from=builder /app/packages/core/dist ./packages/core/dist
+COPY --from=builder /app/packages/core/package.json ./packages/core/
+COPY --from=builder /app/packages/db/dist ./packages/db/dist
+COPY --from=builder /app/packages/db/package.json ./packages/db/
+COPY --from=builder /app/packages/db/prisma ./packages/db/prisma
+COPY --from=builder /app/apps/api-server/dist ./apps/api-server/dist
+COPY --from=builder /app/apps/api-server/package.json ./apps/api-server/
+COPY --from=builder /app/apps/api-server/node_modules ./apps/api-server/node_modules
+
+# Prisma client needs the generated files
+COPY --from=builder /app/node_modules/.pnpm/@prisma+client*/node_modules/@prisma/client ./node_modules/@prisma/client
+COPY --from=builder /app/node_modules/.pnpm/.prisma ./node_modules/.pnpm/.prisma
+
+EXPOSE 3001
+
+# Run migrations then start server
+CMD ["sh", "-c", "cd packages/db && npx prisma migrate deploy && cd /app && node apps/api-server/dist/main.js"]

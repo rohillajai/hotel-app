@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main]
+
+env:
+  NODE_ENV: test
+  DATABASE_URL: postgresql://hotelapp:testpass@localhost:5432/hotelapp_test
+  REDIS_URL: redis://localhost:6379
+  JWT_SECRET: ci-test-jwt-secret-min-32-chars-long!!!
+  JWT_REFRESH_SECRET: ci-test-refresh-secret-min-32-chars!!!
+  COTURN_SECRET: ci-test-coturn-secret
+  OTP_BYPASS_ENABLED: "true"
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: hotelapp_test
+          POSTGRES_USER: hotelapp
+          POSTGRES_PASSWORD: testpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm --filter @hotel-app/config build && pnpm --filter @hotel-app/core build
+
+      - name: Generate Prisma client
+        run: pnpm --filter @hotel-app/db db:generate
+
+      - name: Run migrations
+        run: pnpm --filter @hotel-app/db migrate:dev --name ci
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Type check
+        run: |
+          pnpm --filter @hotel-app/api-server type-check
+          pnpm --filter @hotel-app/signaling-server type-check
+          pnpm --filter @hotel-app/core type-check
+          pnpm --filter @hotel-app/config type-check
+
+  build:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        run: pnpm build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: |
+            apps/api-server/dist
+            apps/signaling-server/dist
+          retention-days: 7
+
+  deploy-migrate:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @hotel-app/db db:generate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Deploy migrations
+        run: pnpm --filter @hotel-app/db migrate:deploy
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

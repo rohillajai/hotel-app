@@ -1,0 +1,40 @@
+# ─── Signaling Server Dockerfile ──────────────────────────────────────────────
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+RUN npm install -g pnpm@9
+
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY packages/config/package.json ./packages/config/
+COPY packages/core/package.json ./packages/core/
+COPY apps/signaling-server/package.json ./apps/signaling-server/
+
+RUN pnpm install --frozen-lockfile
+
+COPY packages/config/ ./packages/config/
+COPY packages/core/ ./packages/core/
+COPY apps/signaling-server/ ./apps/signaling-server/
+
+RUN pnpm --filter @hotel-app/config build
+RUN pnpm --filter @hotel-app/core build
+RUN pnpm --filter @hotel-app/signaling-server build
+
+# ─── Production image ─────────────────────────────────────────────────────────
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+RUN npm install -g pnpm@9
+
+COPY --from=builder /app/package.json /app/pnpm-workspace.yaml /app/pnpm-lock.yaml /app/.npmrc ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages/config/dist ./packages/config/dist
+COPY --from=builder /app/packages/config/package.json ./packages/config/
+COPY --from=builder /app/packages/core/dist ./packages/core/dist
+COPY --from=builder /app/packages/core/package.json ./packages/core/
+COPY --from=builder /app/apps/signaling-server/dist ./apps/signaling-server/dist
+COPY --from=builder /app/apps/signaling-server/package.json ./apps/signaling-server/
+COPY --from=builder /app/apps/signaling-server/node_modules ./apps/signaling-server/node_modules
+
+EXPOSE 3002
+
+CMD ["node", "apps/signaling-server/dist/index.js"]
