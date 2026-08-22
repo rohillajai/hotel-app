@@ -2,7 +2,7 @@ FROM node:20-alpine AS base
 RUN npm install -g pnpm@9
 
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc .pnpmfile.cjs ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc .pnpmfile.cjs tsconfig.base.json ./
 COPY packages/config/package.json packages/config/
 COPY packages/core/package.json packages/core/
 COPY apps/signaling-server/package.json apps/signaling-server/
