@@ -20,16 +20,8 @@ RUN pnpm --filter @hotel-app/config build
 RUN pnpm --filter @hotel-app/core build
 
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-
 RUN pnpm --filter @hotel-app/admin-web build
-
-FROM node:20-alpine AS runner
-WORKDIR /app
-
-COPY --from=builder /app/apps/admin-web/.next/standalone ./
-COPY --from=builder /app/apps/admin-web/.next/static ./apps/admin-web/.next/static
-COPY --from=builder /app/apps/admin-web/public ./apps/admin-web/public
 
 ENV PORT=3004
 EXPOSE 3004
-CMD ["node", "apps/admin-web/server.js"]
+CMD ["pnpm", "--filter", "@hotel-app/admin-web", "start"]

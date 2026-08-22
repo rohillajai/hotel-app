@@ -22,16 +22,8 @@ RUN pnpm --filter @hotel-app/core build
 
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_SIGNALING_URL=$NEXT_PUBLIC_SIGNALING_URL
-
 RUN pnpm --filter @hotel-app/staff-pwa build
-
-FROM node:20-alpine AS runner
-WORKDIR /app
-
-COPY --from=builder /app/apps/staff-pwa/.next/standalone ./
-COPY --from=builder /app/apps/staff-pwa/.next/static ./apps/staff-pwa/.next/static
-COPY --from=builder /app/apps/staff-pwa/public ./apps/staff-pwa/public
 
 ENV PORT=3003
 EXPOSE 3003
-CMD ["node", "apps/staff-pwa/server.js"]
+CMD ["pnpm", "--filter", "@hotel-app/staff-pwa", "start"]
