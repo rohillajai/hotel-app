@@ -82,7 +82,34 @@ services:
     network_mode: host
     volumes:
       - ./coturn/turnserver.prod.conf:/etc/coturn/turnserver.conf:ro
-    command: -c /etc/coturn/turnserver.conf --static-auth-secret=${COTURN_SECRET} --external-ip=13.207.8.37
+    command: -c /etc/coturn/turnserver.conf --static-auth-secret=${COTURN_SECRET} --external-ip=15.207.160.237
+
+  # ─── Guest PWA ─────────────────────────────────────────────────────────────
+  guest-pwa:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.guest-pwa
+    restart: always
+    networks:
+      - backend
+
+  # ─── Staff PWA ─────────────────────────────────────────────────────────────
+  staff-pwa:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.staff-pwa
+    restart: always
+    networks:
+      - backend
+
+  # ─── Admin Web ─────────────────────────────────────────────────────────────
+  admin-web:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.admin-web
+    restart: always
+    networks:
+      - backend
 
   # ─── Caddy (reverse proxy + auto Let's Encrypt HTTPS) ──────────────────────
   caddy:
@@ -98,6 +125,9 @@ services:
     depends_on:
       - api-server
       - signaling-server
+      - guest-pwa
+      - staff-pwa
+      - admin-web
     networks:
       - backend
 

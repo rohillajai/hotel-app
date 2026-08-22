@@ -2,14 +2,14 @@ FROM node:20-alpine AS base
 RUN npm install -g pnpm@9
 
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc .pnpmfile.cjs tsconfig.base.json ./
 COPY packages/config/package.json packages/config/
 COPY packages/core/package.json packages/core/
 COPY packages/ui/package.json packages/ui/
 COPY packages/api-client/package.json packages/api-client/
 COPY apps/guest-pwa/package.json apps/guest-pwa/
 
-RUN pnpm install --frozen-lockfile --prod=false
+RUN pnpm install --no-frozen-lockfile --prod=false
 
 COPY packages/ packages/
 COPY apps/guest-pwa/ apps/guest-pwa/
