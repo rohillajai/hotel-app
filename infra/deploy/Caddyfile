@@ -1,23 +1,32 @@
-# Caddy reverse proxy — auto HTTPS via Let's Encrypt
-# Handles TLS certificates automatically for all domains
+# Caddy reverse proxy — serves everything from one EC2
+# Auto-provisions Let's Encrypt HTTPS certs for all subdomains
 
+# API Server
 api.epbx.negd.in {
     reverse_proxy api-server:3001
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
-        X-Content-Type-Options nosniff
-        X-Frame-Options DENY
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
     }
 }
 
+# Signaling Server (WebSocket)
 signal.epbx.negd.in {
     reverse_proxy signaling-server:3002
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains"
-    }
 }
 
-# Health check on port 80 (for AWS checks if needed)
-:80 {
-    respond /health "OK" 200
+# Guest PWA
+guest.epbx.negd.in {
+    reverse_proxy guest-pwa:3000
+}
+
+# Staff PWA
+staff.epbx.negd.in {
+    reverse_proxy staff-pwa:3003
+}
+
+# Admin Dashboard
+admin.epbx.negd.in {
+    reverse_proxy admin-web:3004
 }

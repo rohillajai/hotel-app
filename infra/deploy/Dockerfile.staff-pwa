@@ -1,0 +1,26 @@
+FROM node:20-alpine AS base
+RUN npm install -g pnpm@9
+
+WORKDIR /app
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY packages/config/package.json packages/config/
+COPY packages/core/package.json packages/core/
+COPY packages/ui/package.json packages/ui/
+COPY packages/api-client/package.json packages/api-client/
+COPY apps/staff-pwa/package.json apps/staff-pwa/
+
+RUN pnpm install --frozen-lockfile --prod=false
+
+COPY packages/ packages/
+COPY apps/staff-pwa/ apps/staff-pwa/
+
+RUN pnpm --filter @hotel-app/config build
+RUN pnpm --filter @hotel-app/core build
+
+ENV NEXT_PUBLIC_API_URL=https://api.epbx.negd.in
+ENV NEXT_PUBLIC_SIGNALING_URL=https://signal.epbx.negd.in
+
+RUN pnpm --filter @hotel-app/staff-pwa build
+
+EXPOSE 3003
+CMD ["pnpm", "--filter", "@hotel-app/staff-pwa", "start"]

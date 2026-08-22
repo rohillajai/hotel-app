@@ -2,88 +2,70 @@
 set -euo pipefail
 
 ###############################################################################
-# Deploy script — run on the EC2 instance after setup-ec2.sh
-# Clones the repo, builds containers, starts everything
+# deploy.sh — Run this on the EC2 instance to deploy/update the app
+# Usage: cd /opt/hotel-app && ./deploy.sh
 ###############################################################################
 
-APP_DIR="/opt/hotel-app"
-REPO_URL="https://github.com/rohillajai/hotel-app.git"
+REPO_URL="https://github.com/YOUR_USERNAME/Hotel_APP.git"  # UPDATE THIS
 BRANCH="main"
+APP_DIR="/opt/hotel-app"
 
-echo "=== Cloning / updating repo ==="
+echo "=== Deploying Hotel App ==="
+echo "Time: $(date)"
+
+# Pull latest code
 if [ -d "$APP_DIR/repo" ]; then
+  echo "=== Pulling latest changes ==="
   cd "$APP_DIR/repo"
   git pull origin "$BRANCH"
 else
-  git clone "$REPO_URL" "$APP_DIR/repo"
+  echo "=== Cloning repository ==="
+  git clone -b "$BRANCH" "$REPO_URL" "$APP_DIR/repo"
   cd "$APP_DIR/repo"
-  git checkout "$BRANCH"
 fi
 
-echo "=== Copying env file ==="
-if [ ! -f "$APP_DIR/repo/infra/deploy/.env.prod" ]; then
-  echo "ERROR: .env.prod not found!"
-  echo "Create it first: cp infra/deploy/.env.prod.example infra/deploy/.env.prod"
-  echo "Then fill in your real secrets."
+# Copy env file if not exists
+if [ ! -f "infra/deploy/.env.prod" ]; then
+  echo "ERROR: infra/deploy/.env.prod not found!"
+  echo "Copy .env.prod.example to .env.prod and fill in your secrets first."
   exit 1
 fi
 
-echo "=== Setting coturn external IP ==="
-PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || curl -s ifconfig.me)
-PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4 2>/dev/null || hostname -I | awk '{print $1}')
+# Build and start
+echo "=== Building and starting services ==="
+cd infra/deploy
+docker compose -f docker-compose.prod.yml build --no-cache
+docker compose -f docker-compose.prod.yml up -d
 
-# Inject external-ip into coturn config
-COTURN_SECRET=$(grep COTURN_SECRET "$APP_DIR/repo/infra/deploy/.env.prod" | cut -d'=' -f2)
-cat > "$APP_DIR/repo/infra/deploy/coturn/turnserver.runtime.conf" << CONF
-listening-port=3478
-listening-ip=0.0.0.0
-relay-ip=${PRIVATE_IP}
-external-ip=${PUBLIC_IP}/${PRIVATE_IP}
-min-port=49152
-max-port=65535
-use-auth-secret
-static-auth-secret=${COTURN_SECRET}
-realm=turn.epbx.negd.in
-fingerprint
-no-tcp-relay
-no-multicast-peers
-denied-peer-ip=0.0.0.0-0.255.255.255
-denied-peer-ip=10.0.0.0-10.255.255.255
-denied-peer-ip=172.16.0.0-172.31.255.255
-denied-peer-ip=192.168.0.0-192.168.255.255
-denied-peer-ip=127.0.0.0-127.255.255.255
-no-tlsv1
-no-tlsv1_1
-log-file=stdout
-simple-log
-CONF
-
-echo "=== Building and starting containers ==="
-cd "$APP_DIR/repo"
-docker compose -f infra/deploy/docker-compose.prod.yml --env-file infra/deploy/.env.prod up -d --build
-
-echo "=== Waiting for services to be healthy ==="
-sleep 10
-
+# Run database migrations
 echo "=== Running database migrations ==="
-docker compose -f infra/deploy/docker-compose.prod.yml exec api-server node -e "
-const { execSync } = require('child_process');
-execSync('npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma', { stdio: 'inherit', cwd: '/app' });
-"
+docker compose -f docker-compose.prod.yml exec api-server \
+  node -e "
+    const { execSync } = require('child_process');
+    execSync('npx prisma migrate deploy --schema=/app/packages/db/prisma/schema.prisma', {
+      stdio: 'inherit',
+      env: { ...process.env }
+    });
+  "
 
-echo "=== Seeding database (first deploy only — safe to re-run) ==="
-docker compose -f infra/deploy/docker-compose.prod.yml exec api-server node -e "
-const { execSync } = require('child_process');
-try { execSync('npx ts-node --project packages/db/tsconfig.seed.json packages/db/prisma/seed.ts', { stdio: 'inherit', cwd: '/app' }); }
-catch(e) { console.log('Seed may have already run — skipping'); }
-"
+# Run seed (only first time — safe to re-run)
+echo "=== Seeding database ==="
+docker compose -f docker-compose.prod.yml exec api-server \
+  node -e "
+    const { execSync } = require('child_process');
+    try {
+      execSync('npx ts-node --project /app/packages/db/tsconfig.seed.json /app/packages/db/prisma/seed.ts', {
+        stdio: 'inherit',
+        env: { ...process.env }
+      });
+    } catch(e) { console.log('Seed may have already run — skipping'); }
+  "
 
 echo ""
-echo "=== Deployment complete! ==="
-echo "  API:       https://api.epbx.negd.in"
-echo "  Signaling: https://signal.epbx.negd.in"
-echo "  TURN:      turn.epbx.negd.in:3478"
-echo "  Server IP: ${PUBLIC_IP}"
+echo "=== Deployment complete ==="
+echo "Services running:"
+docker compose -f docker-compose.prod.yml ps
 echo ""
-echo "  Check status: docker compose -f infra/deploy/docker-compose.prod.yml ps"
-echo "  View logs:    docker compose -f infra/deploy/docker-compose.prod.yml logs -f"
+echo "API:       https://api.epbx.negd.in"
+echo "Signaling: https://signal.epbx.negd.in"
+echo "TURN:      turn:15.207.160.237:3478"
