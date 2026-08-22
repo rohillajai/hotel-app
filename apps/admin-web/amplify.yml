@@ -1,22 +1,21 @@
 version: 1
-applications:
-  - appRoot: apps/admin-web
-    frontend:
-      phases:
-        preBuild:
-          commands:
-            - cd ../.. && npm install -g pnpm@9
-            - cd ../.. && pnpm install --frozen-lockfile
-            - cd ../.. && pnpm --filter @hotel-app/config build
-            - cd ../.. && pnpm --filter @hotel-app/core build
-        build:
-          commands:
-            - cd ../.. && pnpm --filter @hotel-app/admin-web build
-      artifacts:
-        baseDirectory: .next
-        files:
-          - '**/*'
-      cache:
-        paths:
-          - ../../node_modules/**/*
-          - .next/cache/**/*
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - npm install -g pnpm@9
+        - cd ../.. && pnpm install --frozen-lockfile
+        - cd ../.. && pnpm --filter @hotel-app/config build
+        - cd ../.. && pnpm --filter @hotel-app/core build
+    build:
+      commands:
+        - pnpm next build
+  artifacts:
+    baseDirectory: .next
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - ../../node_modules/**/*
+      - node_modules/**/*
+      - .next/cache/**/*

@@ -43,8 +43,8 @@ const AppConfigSchema = z
 
     // AWS
     AWS_REGION: z.string().default('ap-south-1'),
-    AWS_ACCESS_KEY_ID: z.string().optional(),
-    AWS_SECRET_ACCESS_KEY: z.string().optional(),
+    AWS_ACCESS_KEY_ID: z.string().optional().transform(v => v || undefined),
+    AWS_SECRET_ACCESS_KEY: z.string().optional().transform(v => v || undefined),
 
     // S3 buckets
     S3_KYC_BUCKET: z.string().default('hotel-kyc-docs'),
@@ -53,7 +53,7 @@ const AppConfigSchema = z
     S3_SIGNED_URL_EXPIRES_SECONDS: positiveIntFromString.default('900'), // 15 min
 
     // AWS SNS
-    SNS_OTP_TOPIC_ARN: z.string().optional(),
+    SNS_OTP_TOPIC_ARN: z.string().optional().transform(v => v || undefined),
 
     // OTP
     OTP_BYPASS_ENABLED: booleanFromString.default('false'),
@@ -70,9 +70,9 @@ const AppConfigSchema = z
     TURN_CREDENTIAL_TTL_SECONDS: positiveIntFromString.default('3600'), // 1 hour
 
     // Web Push / VAPID
-    VAPID_PUBLIC_KEY: z.string().optional(),
-    VAPID_PRIVATE_KEY: z.string().optional(),
-    VAPID_SUBJECT: z.string().email().optional(),
+    VAPID_PUBLIC_KEY: z.string().optional().transform(v => v || undefined),
+    VAPID_PRIVATE_KEY: z.string().optional().transform(v => v || undefined),
+    VAPID_SUBJECT: z.string().email().optional().or(z.literal('')).transform(v => v || undefined),
 
     // Signaling server
     SIGNALING_SERVER_URL: z.string().url().default('http://localhost:3002'),
