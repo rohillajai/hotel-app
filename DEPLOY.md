@@ -1,296 +1,314 @@
-# Deployment Guide — Single EC2 + Amplify
+# Deployment Guide — Option A (Single EC2 + Amplify)
 
-**Architecture:** 1x EC2 `t3.medium` (backend + DB + Redis + coturn) + Amplify Hosting (3 frontends)  
-**Cost:** ~₹4,000–5,000/month  
-**Domain:** `epbx.negd.in`
+**Instance:** `i-0e5efbfff6727d24b` | `15.207.160.237` | ap-south-1  
+**Domain:** `epbx.negd.in`  
+**Cost:** ~₹4,000–5,000/month
 
 ---
 
-## Prerequisites Checklist
+## Architecture
+
+```
+                    ┌── guest.epbx.negd.in ──► Amplify (Guest PWA)
+Internet ──────────┼── staff.epbx.negd.in ──► Amplify (Staff PWA)
+                    ├── admin.epbx.negd.in ──► Amplify (Admin Web)
+                    │
+                    ├── api.epbx.negd.in ────► EC2:443 (Caddy → API :3001)
+                    ├── signal.epbx.negd.in ─► EC2:443 (Caddy → Signaling :3002)
+                    └── turn.epbx.negd.in ───► EC2:3478 (coturn direct)
+
+EC2 (t3.medium) runs:
+  Docker Compose → [PostgreSQL, Redis, API Server, Signaling, coturn, Caddy]
+```
+
+---
+
+## Pre-requisites (already done)
 
 - [x] AWS account with IAM admin user
-- [x] Secrets generated (Step 5 done)
-- [ ] EC2 key pair created
-- [ ] Domain DNS access for `epbx.negd.in`
-- [ ] Code pushed to a Git repo (GitHub/CodeCommit)
+- [x] EC2 instance running (15.207.160.237)
+- [x] SSL — handled by Caddy (auto Let's Encrypt), no ACM needed for EC2
 
 ---
 
-## Step 1: Create IAM User (if not done)
+## Step 1: DNS Records
 
-1. AWS Console → IAM → Users → Create user: `hotel-app-admin`
-2. Attach policy: `AdministratorAccess`
-3. Create access key (CLI use case) → save Access Key ID + Secret
-
-```bash
-aws configure
-# Region: ap-south-1, Output: json
-aws sts get-caller-identity  # verify
-```
-
----
-
-## Step 2: Create EC2 Key Pair
-
-```bash
-aws ec2 create-key-pair \
-  --key-name hotel-app-prod \
-  --region ap-south-1 \
-  --query 'KeyMaterial' \
-  --output text > ~/.ssh/hotel-app-prod.pem
-
-chmod 400 ~/.ssh/hotel-app-prod.pem
-```
-
----
-
-## Step 3: Create S3 Buckets
-
-```bash
-aws s3 mb s3://hotel-app-prod-kyc-docs --region ap-south-1
-aws s3 mb s3://hotel-app-prod-app-assets --region ap-south-1
-
-# Block all public access
-aws s3api put-public-access-block --bucket hotel-app-prod-kyc-docs \
-  --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
-
-aws s3api put-public-access-block --bucket hotel-app-prod-app-assets \
-  --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
-```
-
----
-
-## Step 4: Launch EC2 Instance
-
-```bash
-# Find Ubuntu 22.04 AMI
-AMI_ID=$(aws ec2 describe-images \
-  --owners 099720109477 \
-  --filters "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" \
-  --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' \
-  --output text --region ap-south-1)
-
-echo "AMI: $AMI_ID"
-
-# Create security group
-SG_ID=$(aws ec2 create-security-group \
-  --group-name hotel-app-sg \
-  --description "Hotel App EC2" \
-  --region ap-south-1 \
-  --query 'GroupId' --output text)
-
-# Open ports
-aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 22 --cidr 0.0.0.0/0 --region ap-south-1
-aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 80 --cidr 0.0.0.0/0 --region ap-south-1
-aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 443 --cidr 0.0.0.0/0 --region ap-south-1
-aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol udp --port 3478 --cidr 0.0.0.0/0 --region ap-south-1
-aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol udp --port 49152-65535 --cidr 0.0.0.0/0 --region ap-south-1
-
-# Launch instance
-INSTANCE_ID=$(aws ec2 run-instances \
-  --image-id $AMI_ID \
-  --instance-type t3.medium \
-  --key-name hotel-app-prod \
-  --security-group-ids $SG_ID \
-  --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":30,"VolumeType":"gp3","Encrypted":true}}]' \
-  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=hotel-app-prod}]' \
-  --region ap-south-1 \
-  --query 'Instances[0].InstanceId' --output text)
-
-echo "Instance: $INSTANCE_ID"
-
-# Wait for running
-aws ec2 wait instance-running --instance-ids $INSTANCE_ID --region ap-south-1
-
-# Allocate Elastic IP
-ALLOC_ID=$(aws ec2 allocate-address --domain vpc --region ap-south-1 --query 'AllocationId' --output text)
-PUBLIC_IP=$(aws ec2 describe-addresses --allocation-ids $ALLOC_ID --region ap-south-1 --query 'Addresses[0].PublicIp' --output text)
-aws ec2 associate-address --instance-id $INSTANCE_ID --allocation-id $ALLOC_ID --region ap-south-1
-
-echo "Public IP: $PUBLIC_IP"
-echo ""
-echo ">>> SAVE THIS IP — you need it for DNS records <<<"
-```
-
----
-
-## Step 5: Configure DNS Records
-
-In your DNS manager for `negd.in`, add these records pointing to the Elastic IP from Step 4:
+Add these records in your DNS management for `epbx.negd.in`:
 
 | Type | Name | Value |
-|---|---|---|
-| A | `api.epbx` | `<ELASTIC_IP>` |
-| A | `signal.epbx` | `<ELASTIC_IP>` |
-| A | `turn.epbx` | `<ELASTIC_IP>` |
+|------|------|-------|
+| A | api.epbx.negd.in | 15.207.160.237 |
+| A | signal.epbx.negd.in | 15.207.160.237 |
+| A | turn.epbx.negd.in | 15.207.160.237 |
 
-For Amplify frontends (added after Amplify setup in Step 8):
-| Type | Name | Value |
-|---|---|---|
-| CNAME | `guest.epbx` | `<amplify-provided-url>` |
-| CNAME | `staff.epbx` | `<amplify-provided-url>` |
-| CNAME | `admin.epbx` | `<amplify-provided-url>` |
+(Amplify domains are added later — Amplify gives you CNAME values)
+
+**Do this now** — DNS propagation takes 5-30 minutes. Caddy needs the DNS pointing to the EC2 before it can issue certs.
 
 ---
 
-## Step 6: Setup the EC2 Instance
+## Step 2: Open Ports on EC2 Security Group
+
+Go to EC2 Console → Instance → Security tab → Security Group → Edit Inbound Rules:
+
+| Port | Protocol | Source | Purpose |
+|------|----------|--------|---------|
+| 22 | TCP | Your IP only | SSH |
+| 80 | TCP | 0.0.0.0/0 | HTTP (Caddy redirect → HTTPS) |
+| 443 | TCP | 0.0.0.0/0 | HTTPS (Caddy → API + Signaling) |
+| 3478 | UDP | 0.0.0.0/0 | STUN/TURN |
+| 3478 | TCP | 0.0.0.0/0 | TURN TCP |
+| 49152-65535 | UDP | 0.0.0.0/0 | TURN relay range |
+
+---
+
+## Step 3: SSH into EC2 and setup
 
 ```bash
-# SSH into the instance
-ssh -i ~/.ssh/hotel-app-prod.pem ubuntu@<ELASTIC_IP>
+ssh -i ~/.ssh/hotel-app-prod.pem ubuntu@15.207.160.237
+```
 
-# Run the setup script
-curl -fsSL https://raw.githubusercontent.com/<your-repo>/main/infra/deploy/setup-ec2.sh | sudo bash
+Once in, run:
 
-# OR if not on GitHub yet, copy and paste the setup-ec2.sh content and run:
-# sudo bash setup-ec2.sh
+```bash
+# Download and run the setup script
+curl -fsSL https://raw.githubusercontent.com/YOUR_REPO/main/infra/deploy/setup-ec2.sh | bash
+```
 
-# Log out and back in (for docker group)
+Or paste it manually:
+
+```bash
+sudo apt-get update -y && sudo apt-get upgrade -y
+
+# Install Docker
+sudo apt-get install -y ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update -y
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin git
+
+# Allow ubuntu user to run docker
+sudo usermod -aG docker ubuntu
+
+# Create app dir
+sudo mkdir -p /opt/hotel-app && sudo chown ubuntu:ubuntu /opt/hotel-app
+```
+
+**Log out and back in** (for docker group to apply):
+```bash
 exit
-ssh -i ~/.ssh/hotel-app-prod.pem ubuntu@<ELASTIC_IP>
+ssh -i ~/.ssh/hotel-app-prod.pem ubuntu@15.207.160.237
+```
+
+Verify docker works:
+```bash
+docker --version
+docker compose version
 ```
 
 ---
 
-## Step 7: Deploy the App on EC2
+## Step 4: Clone your repo
 
 ```bash
-# On the EC2 instance:
 cd /opt/hotel-app
-
-# Clone your repo (push your code to GitHub first)
-git clone https://github.com/<your-username>/Hotel_APP.git .
-
-# Create production env file
-cp infra/deploy/.env.prod.example infra/deploy/.env.prod
-nano infra/deploy/.env.prod
-# Fill in ALL secrets from Step 5 of the previous guide
-
-# Update coturn config with your secrets and IP
-PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
-PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-sed -i "s|REPLACE_WITH_COTURN_SECRET|<your_coturn_secret>|" infra/deploy/coturn/turnserver.prod.conf
-sed -i "s|# external-ip=.*|external-ip=${PUBLIC_IP}/${PRIVATE_IP}|" infra/deploy/coturn/turnserver.prod.conf
-
-# Start everything
-docker compose -f infra/deploy/docker-compose.prod.yml up -d --build
-
-# Check status
-docker compose -f infra/deploy/docker-compose.prod.yml ps
-
-# View logs
-docker compose -f infra/deploy/docker-compose.prod.yml logs -f api-server
+git clone https://github.com/YOUR_USERNAME/Hotel_APP.git .
 ```
 
-After ~2 minutes, verify:
+(Or if not on GitHub yet, scp the entire project:)
 ```bash
-curl https://api.epbx.negd.in/health
-# Should return: {"status":"ok","timestamp":"..."}
+# FROM YOUR MAC (not on EC2):
+scp -i ~/.ssh/hotel-app-prod.pem -r /Users/jai/Documents/Hotel_APP/* ubuntu@15.207.160.237:/opt/hotel-app/
 ```
 
 ---
 
-## Step 8: Deploy Frontends to Amplify
+## Step 5: Create production .env file
 
-In the AWS Console:
+On the EC2:
 
-### 8.1 — Guest PWA
-1. Go to **AWS Amplify** (ap-south-1)
-2. Click **New app** → **Host web app**
-3. Connect your GitHub repo
-4. **App settings:**
-   - App name: `hotel-guest`
-   - Branch: `main`
-   - Build settings: **Monorepo** → App root: `apps/guest-pwa`
-5. **Environment variables:**
+```bash
+cd /opt/hotel-app/infra/deploy
+cp .env.prod.example .env.prod
+nano .env.prod   # or vim
+```
+
+Generate secrets (run on EC2):
+```bash
+echo "DB Password: $(openssl rand -base64 16 | tr -d /+=)"
+echo "JWT Secret: $(openssl rand -base64 32)"
+echo "JWT Refresh: $(openssl rand -base64 32)"
+echo "Coturn Secret: $(openssl rand -base64 24)"
+echo "Signaling Secret: $(openssl rand -base64 32)"
+```
+
+Fill in `.env.prod` with the generated values. Important:
+- `POSTGRES_PASSWORD` and the password in `DATABASE_URL` must match
+- `OTP_BYPASS_ENABLED=false` (production!)
+- `CORS_ORIGINS=https://guest.epbx.negd.in,https://staff.epbx.negd.in,https://admin.epbx.negd.in`
+- For now, skip S3/SNS if not ready (leave `AWS_ACCESS_KEY_ID` empty — document upload and real OTP won't work but the rest will)
+
+Also update the coturn secret:
+```bash
+cd /opt/hotel-app/infra/deploy/coturn
+sed -i "s/COTURN_SECRET_PLACEHOLDER/$(grep COTURN_SECRET ../.env.prod | cut -d= -f2)/" turnserver.prod.conf
+```
+
+---
+
+## Step 6: Build and start everything
+
+```bash
+cd /opt/hotel-app/infra/deploy
+
+# Build and start all containers
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+This takes 3-5 minutes on first run (downloading images + building Node apps).
+
+Check status:
+```bash
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs -f api-server
+```
+
+All containers should show `running` or `healthy`.
+
+---
+
+## Step 7: Run database migrations and seed
+
+```bash
+# Exec into the API server container and run migrations
+docker compose -f docker-compose.prod.yml exec api-server sh -c "
+  cd /app/packages/db && \
+  npx prisma migrate deploy && \
+  npx ts-node --project tsconfig.seed.json prisma/seed.ts
+"
+```
+
+---
+
+## Step 8: Verify backend is working
+
+```bash
+# Test API health (from EC2 or your Mac)
+curl https://api.epbx.negd.in/health
+
+# Should return: {"status":"ok","timestamp":"...","uptime":...}
+```
+
+If DNS hasn't propagated yet, test with IP directly:
+```bash
+curl http://15.207.160.237:3001/health
+```
+
+---
+
+## Step 9: Deploy frontends to Amplify
+
+Go to AWS Console → **AWS Amplify** (ap-south-1):
+
+### For each of the 3 apps (guest, staff, admin):
+
+1. Click **New app** → **Host web app**
+2. Connect to your Git provider (GitHub/CodeCommit)
+3. Select your repo and branch (`main`)
+4. **Build settings** — edit the build spec:
+
+**Guest PWA:**
+- App name: `hotel-guest`
+- Root directory: `/` (monorepo root)
+- Build commands:
+  ```yaml
+  version: 1
+  frontend:
+    phases:
+      preBuild:
+        commands:
+          - npm install -g pnpm@9
+          - pnpm install --frozen-lockfile
+          - pnpm --filter @hotel-app/config build
+          - pnpm --filter @hotel-app/core build
+      build:
+        commands:
+          - pnpm --filter @hotel-app/guest-pwa build
+    artifacts:
+      baseDirectory: apps/guest-pwa/.next
+      files:
+        - '**/*'
+    cache:
+      paths:
+        - node_modules/**/*
+        - apps/guest-pwa/.next/cache/**/*
+  ```
+
+5. **Environment variables** in Amplify Console:
    - `NEXT_PUBLIC_API_URL` = `https://api.epbx.negd.in`
    - `NEXT_PUBLIC_SIGNALING_URL` = `https://signal.epbx.negd.in`
-6. Deploy → wait for build to complete
-7. **Domain management** → Add domain → `epbx.negd.in` → subdomain `guest`
-8. Amplify provides a CNAME — add it to your DNS
 
-### 8.2 — Staff PWA
-Repeat the above with:
-- App name: `hotel-staff`
-- App root: `apps/staff-pwa`
-- Same env vars
-- Subdomain: `staff`
+6. **Custom domain** (after first deploy):
+   - Amplify → App → Domain management → Add domain
+   - `guest.epbx.negd.in` → Amplify provides CNAME records → add to your DNS
 
-### 8.3 — Admin Web
-Repeat with:
-- App name: `hotel-admin`
-- App root: `apps/admin-web`
-- Same env vars
-- Subdomain: `admin`
+Repeat for **staff** (`staff.epbx.negd.in`) and **admin** (`admin.epbx.negd.in`), changing the filter to `@hotel-app/staff-pwa` and `@hotel-app/admin-web`.
 
 ---
 
-## Step 9: Seed the Database
+## Step 10: Create S3 buckets (optional — for KYC upload)
 
 ```bash
-# On the EC2 instance:
-cd /opt/hotel-app
+aws s3 mb s3://hotel-app-kyc-docs --region ap-south-1
+aws s3 mb s3://hotel-app-assets --region ap-south-1
 
-# Run seed inside the api-server container
-docker compose -f infra/deploy/docker-compose.prod.yml exec api-server \
-  sh -c "cd packages/db && npx prisma db seed"
+# Block all public access
+aws s3api put-public-access-block --bucket hotel-app-kyc-docs \
+  --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+
+aws s3api put-public-access-block --bucket hotel-app-assets \
+  --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
 ```
 
 ---
 
-## Step 10: Verify Everything
+## Verify Everything Works
 
-| URL | Expected |
-|---|---|
-| `https://api.epbx.negd.in/health` | `{"status":"ok"}` |
-| `https://guest.epbx.negd.in` | Guest PWA landing page |
-| `https://staff.epbx.negd.in` | Staff login page |
-| `https://admin.epbx.negd.in` | Admin login page |
-
-**Test login:**
-- Admin: `admin@grandpilot.hotel` / `Admin@123`
-- Staff: `reception@grandpilot.hotel` / `Staff@123`
+| Test | Command / URL |
+|------|---------------|
+| API health | `curl https://api.epbx.negd.in/health` |
+| Guest PWA | Open `https://guest.epbx.negd.in` |
+| Staff PWA | Open `https://staff.epbx.negd.in` |
+| Admin login | Open `https://admin.epbx.negd.in` → `admin@grandpilot.hotel` / `Admin@123` |
+| TURN test | `turnutils_uclient -T -u test -w test 15.207.160.237` |
 
 ---
 
-## Maintenance Commands
+## Updating the app (after code changes)
 
 ```bash
-# SSH to server
-ssh -i ~/.ssh/hotel-app-prod.pem ubuntu@<ELASTIC_IP>
+ssh -i ~/.ssh/hotel-app-prod.pem ubuntu@15.207.160.237
 cd /opt/hotel-app
-
-# Pull latest code and redeploy
 git pull
-docker compose -f infra/deploy/docker-compose.prod.yml up -d --build
-
-# View logs
-docker compose -f infra/deploy/docker-compose.prod.yml logs -f
-
-# Restart a specific service
-docker compose -f infra/deploy/docker-compose.prod.yml restart api-server
-
-# Database backup
-docker compose -f infra/deploy/docker-compose.prod.yml exec postgres \
-  pg_dump -U hotelapp hotelapp > backup_$(date +%Y%m%d).sql
-
-# Run migrations after schema changes
-docker compose -f infra/deploy/docker-compose.prod.yml exec api-server \
-  sh -c "cd packages/db && npx prisma migrate deploy"
+cd infra/deploy
+docker compose -f docker-compose.prod.yml up -d --build
 ```
+
+Amplify frontends auto-deploy on git push to `main`.
 
 ---
 
-## Cost Breakdown
+## Estimated Monthly Cost
 
-| Resource | Monthly Cost (ap-south-1) |
-|---|---|
-| EC2 t3.medium (on-demand) | ~₹2,800 |
-| Elastic IP | ₹0 (attached to running instance) |
-| EBS 30GB gp3 | ~₹250 |
-| S3 (minimal usage) | ~₹50 |
-| Amplify Hosting (3 apps) | ~₹0–500 (free tier covers pilot) |
-| Data transfer | ~₹200–500 |
-| **Total** | **~₹3,500–4,500/month** |
+| Resource | Cost |
+|----------|------|
+| EC2 t3.medium (on-demand) | ~₹3,200 |
+| Elastic IP (if instance is running) | ₹0 |
+| Data transfer (1 GB) | ~₹100 |
+| Amplify Hosting (3 apps, low traffic) | ~₹0–500 |
+| S3 (minimal storage) | ~₹50 |
+| **Total** | **~₹3,500–4,000/month** |
 
-Save more: use a **t3.medium Reserved Instance (1yr)** → ~₹1,800/month instead of ₹2,800.
+Save more: Use a Reserved Instance (1-year) for ~40% discount.
