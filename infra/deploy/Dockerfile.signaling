@@ -2,12 +2,12 @@ FROM node:20-alpine AS base
 RUN npm install -g pnpm@9
 
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc .pnpmfile.cjs ./
 COPY packages/config/package.json packages/config/
 COPY packages/core/package.json packages/core/
 COPY apps/signaling-server/package.json apps/signaling-server/
 
-RUN pnpm install --frozen-lockfile --prod=false
+RUN pnpm install --no-frozen-lockfile --prod=false
 
 COPY packages/config/ packages/config/
 COPY packages/core/ packages/core/
