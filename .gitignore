@@ -19,7 +19,7 @@ build
 # .env.example IS committed (safe template)
 
 # Prisma
-packages/db/prisma/migrations/*/migration.sql
+# packages/db/prisma/migrations/*/migration.sql
 
 # Logs
 *.log
