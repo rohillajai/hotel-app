@@ -4,14 +4,14 @@ RUN npm install -g pnpm@9
 ARG NEXT_PUBLIC_API_URL=http://localhost:3001
 
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc .pnpmfile.cjs ./
 COPY packages/config/package.json packages/config/
 COPY packages/core/package.json packages/core/
 COPY packages/ui/package.json packages/ui/
 COPY packages/api-client/package.json packages/api-client/
 COPY apps/admin-web/package.json apps/admin-web/
 
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --no-frozen-lockfile
 
 COPY packages/ packages/
 COPY apps/admin-web/ apps/admin-web/
